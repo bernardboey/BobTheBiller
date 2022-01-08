@@ -96,11 +96,15 @@ def help_handler(update: Update, context: CallbackContext):
                              parse_mode=ParseMode.HTML,
                              text=("Hello! Here are the available commands:\n\n"
                                    "<b>/bill - Split a bill with other people in the group</b>\n"
-                                   "Example: /bill 23 taxi\n"
-                                   "Example: /bill 23 taxi @all\n"
-                                   "Example: /bill 23 taxi @USERNAME @USERNAME...\n\n"
-                                   "<b>/paid - Record a payment between yourself and someone else</b>\n"
-                                   "Example: /paid 24.50 @USERNAME\n\n"
+                                   "`/bill [amount] [description]`\n"
+                                   "E.g.: /bill 23 Taxi\n\n"
+                                   "You can optionally add usernames at the end to indicate who to split with:\n"
+                                   "E.g.: /bill 23 Taxi @username @username\n\n"
+                                   "To split with everyone:\n"
+                                   "E.g. : /bill 23 Taxi @all\n\n"
+                                   "<b>/paid - Record a payment to/from someone else</b>\n"
+                                   "`/paid [amount] [username]`\n"
+                                   "E.g.: /paid 24.50 @username\n\n"
                                    "<b>/list - See list of outstanding debts</b>"))
 
 
@@ -174,7 +178,7 @@ def add_bill(update: Update, context: CallbackContext):
         amt_string, name, *list_of_users = context.args
     except ValueError:
         context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text="Invalid format. Please type /bill [amount] [name]")
+                                 text="Invalid format. Please type /bill [amount] [description]")
         return
 
     try:
@@ -356,7 +360,7 @@ def button_bill_choose_payer(update: Update, context: CallbackContext):
     name, amt, payer, participant_ids, participants, date = get_bill_details(update, context, bill_id)
     query.answer(f"Payer changed to {payer.full_name}")
     query.edit_message_text(text=get_bill_message(name, amt, payer, participants),
-                            reply_markup=get_bill_markup(bill_id),
+                            reply_markup=get_bill_markup(bill_id, context.chat_data["bills"][bill_id]["equal"]),
                             parse_mode=ParseMode.HTML)
 
 
@@ -404,12 +408,12 @@ def split_manually(update: Update, context: CallbackContext):
         context.bot.edit_message_text(chat_id=update.effective_chat.id,
                                       message_id=context.chat_data["active_manual_split"]["message_id"],
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=get_bill_markup(bill_id) if not context.chat_data["active_manual_split"]["remaining_participants"] else None,
+                                      reply_markup=get_bill_markup(bill_id, context.chat_data["bills"][bill_id]["equal"]) if not context.chat_data["active_manual_split"]["remaining_participants"] else None,
                                       text=get_bill_message(name, amt, payer, participants))
 
         if not context.chat_data["active_manual_split"]["remaining_participants"]:
             context.chat_data["active_manual_split"]["active"] = False
-            update.message.reply_text(text=f"All done")
+            update.message.reply_text(text=f"All done!")
         else:
             user_id = context.chat_data["active_manual_split"]["remaining_participants"].pop()
             context.chat_data["active_manual_split"]["current_participant"] = user_id
@@ -426,7 +430,7 @@ def button_bill_split_equally(update: Update, context: CallbackContext):
     name, amt, payer, participant_ids, participants, date = get_bill_details(update, context, bill_id)
     query.answer("Bill changed to split equally")
     query.edit_message_text(text=get_bill_message(name, amt, payer, participants),
-                            reply_markup=get_bill_markup(bill_id),
+                            reply_markup=get_bill_markup(bill_id, context.chat_data["bills"][bill_id]["equal"]),
                             parse_mode=ParseMode.HTML)
 
 
@@ -463,7 +467,7 @@ def button_bill_redisplay(update: Update, context: CallbackContext):
     query.answer()
     name, amt, payer, participant_ids, participants, date = get_bill_details(update, context, bill_id)
     query.edit_message_text(text=get_bill_message(name, amt, payer, participants),
-                            reply_markup=get_bill_markup(bill_id),
+                            reply_markup=get_bill_markup(bill_id, context.chat_data["bills"][bill_id]["equal"]),
                             parse_mode=ParseMode.HTML)
 
 
@@ -497,7 +501,7 @@ def paid(update: Update, context: CallbackContext):
         amt_string, username = context.args
     except ValueError:
         context.bot.send_message(chat_id=update.effective_chat.id,
-                                 text="Invalid format. Please type /paid [amount] [person]")
+                                 text="Invalid format. Please type /paid [amount] [username]")
         return
 
     username = username[1:]
@@ -509,7 +513,7 @@ def paid(update: Update, context: CallbackContext):
         return
 
     if amt == 0:
-        context.bot.send_message(chat_id=update.effective_chat.id, text="Invalid amount (annot be zero).")
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Invalid amount (cannot be zero).")
         return
     elif amt < 0:
         context.bot.send_message(chat_id=update.effective_chat.id, text="Invalid amount (cannot be negative).")
@@ -523,7 +527,8 @@ def paid(update: Update, context: CallbackContext):
             user_id = _id
             break
     else:
-        raise ValueError("No user found")
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Invalid username.")
+        return
 
     if context.chat_data["debts"][sender_id][user_id] > 0:  # Sender owes user
         payer = sender_id
