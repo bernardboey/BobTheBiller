@@ -73,6 +73,13 @@ def init(update: Update, context: CallbackContext):
     context.chat_data["payments"] = {}
     context.chat_data["bills"] = {}
     context.chat_data["debts"] = {}
+    context.chat_data["active_manual_split"] = {
+        "active": False,
+        "bill_id": None,
+        "message_id": None,
+        "remaining_participants": [],
+        "current_participant": None
+    }
 
     context.bot.send_message(chat_id=update.effective_chat.id,
                              text=MESSAGE_REGISTERING,
@@ -367,7 +374,7 @@ def button_bill_split_manually(update: Update, context: CallbackContext):
         "bill_id": bill_id,
         "message_id": query.message.message_id,
         "remaining_participants": [user.id for user, _ in sorted(participants, key=lambda user: user[0].full_name, reverse=True)],
-        "current_participant": []
+        "current_participant": None
     }
     user_id = context.chat_data["active_manual_split"]["remaining_participants"].pop()
     context.chat_data["active_manual_split"]["current_participant"] = user_id
