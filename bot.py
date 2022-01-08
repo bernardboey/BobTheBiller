@@ -724,6 +724,7 @@ thread.start()
 app = Flask(__name__)
 
 
+# Using Flask server instead of in-built webhook so that we can query index page for status of bot.
 # https://www.toptal.com/python/telegram-bot-tutorial-python
 @app.route('/{}'.format(TOKEN), methods=['POST'])
 def respond():
@@ -746,4 +747,4 @@ def index():
     return '!'
 
 
-app.run(threaded=True)
+app.run(host="0.0.0.0", port=PORT, threaded=True)
