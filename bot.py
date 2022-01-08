@@ -4,9 +4,11 @@ import logging
 import os
 import queue
 import random
+import threading
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, ForceReply
-from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler, Updater, MessageHandler, Filters
+from flask import Flask, request
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, ForceReply, Bot
+from telegram.ext import CallbackContext, CallbackQueryHandler, CommandHandler, Dispatcher, MessageHandler, Filters
 from telegram.user import User
 
 import persistence
@@ -25,12 +27,14 @@ DATA_BILL_DELETE = "bd"
 DATA_BILL_DELETE_YES = "by"
 DATA_BILL_REDISPLAY = "br"
 
+URL = os.environ.get("URL")
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 PORT = int(os.environ.get('PORT', '8443'))
 
 persistence = persistence.MongoPersistence()
-updater = Updater(token=TOKEN, use_context=True, persistence=persistence)
-dispatcher = updater.dispatcher
+bot = Bot(token=TOKEN)
+update_queue = queue.Queue()
+dispatcher = Dispatcher(bot, update_queue, persistence=persistence)
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 
@@ -51,7 +55,8 @@ def get_delete_payment_markup(payment_id: int):
 
 def get_bill_markup(bill_id: int, equal_split: bool = True):
     keyboard = [
-        [InlineKeyboardButton("Add/Remove " + choose_random_emoji(), callback_data=DATA_MODIFY_PARTICIPANTS + str(bill_id))],
+        [InlineKeyboardButton("Add/Remove " + choose_random_emoji(),
+                              callback_data=DATA_MODIFY_PARTICIPANTS + str(bill_id))],
         [InlineKeyboardButton("Change Payer 🤑", callback_data=DATA_CHANGE_PAYER + str(bill_id))],
         [InlineKeyboardButton("Split Manually 🧮", callback_data=DATA_SPLIT_MANUALLY + str(bill_id))
          if equal_split
@@ -378,7 +383,8 @@ def button_bill_split_manually(update: Update, context: CallbackContext):
         "active": True,
         "bill_id": bill_id,
         "message_id": query.message.message_id,
-        "remaining_participants": [user.id for user, _ in sorted(participants, key=lambda user: user[0].full_name, reverse=True)],
+        "remaining_participants": [user.id for user, _ in
+                                   sorted(participants, key=lambda user: user[0].full_name, reverse=True)],
         "current_participant": None
     }
     user_id = context.chat_data["active_manual_split"]["remaining_participants"].pop()
@@ -409,7 +415,9 @@ def split_manually(update: Update, context: CallbackContext):
         context.bot.edit_message_text(chat_id=update.effective_chat.id,
                                       message_id=context.chat_data["active_manual_split"]["message_id"],
                                       parse_mode=ParseMode.HTML,
-                                      reply_markup=get_bill_markup(bill_id, context.chat_data["bills"][bill_id]["equal"]) if not context.chat_data["active_manual_split"]["remaining_participants"] else None,
+                                      reply_markup=get_bill_markup(bill_id,
+                                                                   context.chat_data["bills"][bill_id]["equal"]) if not
+                                      context.chat_data["active_manual_split"]["remaining_participants"] else None,
                                       text=get_bill_message(name, amt, payer, participants))
 
         if not context.chat_data["active_manual_split"]["remaining_participants"]:
@@ -660,12 +668,14 @@ def list_summary(update: Update, context: CallbackContext):
             message.append(f"• You're all settled!")
         while not owes.empty():
             amt, user2 = owes.get()
-            message.append(f"• You owe <b>${fmt_amt(amt)}</b> to <b>{update.effective_chat.get_member(user2).user.full_name}</b>")
+            message.append(
+                f"• You owe <b>${fmt_amt(amt)}</b> to <b>{update.effective_chat.get_member(user2).user.full_name}</b>")
             all_settled = False
         while not owed.empty():
             amt, user2 = owed.get()
             if user2:
-                message.append(f"• <b>{update.effective_chat.get_member(user2).user.full_name}</b> owes <b>${fmt_amt(-amt)}</b> to you")
+                message.append(
+                    f"• <b>{update.effective_chat.get_member(user2).user.full_name}</b> owes <b>${fmt_amt(-amt)}</b> to you")
             else:
                 message.append(f"• An unclaimed amount of <b>${fmt_amt(amt)}</b> is owed to you")
             all_settled = False
@@ -708,8 +718,32 @@ dispatcher.add_handler(CallbackQueryHandler(button_payment_delete_cancel, patter
 list_handler = CommandHandler('list', list_summary, filters=Filters.update.message)
 dispatcher.add_handler(list_handler)
 
-updater.start_webhook(listen="0.0.0.0",
-                      port=PORT,
-                      url_path=TOKEN,
-                      webhook_url="https://bob-the-biller.herokuapp.com/" + TOKEN)
-updater.idle()
+thread = threading.Thread(target=dispatcher.start, name="dispatcher")
+thread.start()
+
+app = Flask(__name__)
+
+
+# https://www.toptal.com/python/telegram-bot-tutorial-python
+@app.route('/{}'.format(TOKEN), methods=['POST'])
+def respond():
+    update = Update.de_json(request.get_json(force=True), bot)
+    update_queue.put(update)
+    return 'ok', 200
+
+
+@app.route('/set_webhook', methods=['GET', 'POST'])
+def set_webhook():
+    s = bot.setWebhook(URL + TOKEN)
+    if s:
+        return 'ok'
+    else:
+        return 'not ok'
+
+
+@app.route('/')
+def index():
+    return '!'
+
+
+app.run(threaded=True)
