@@ -26,6 +26,7 @@ DATA_BILL_DELETE_YES = "by"
 DATA_BILL_REDISPLAY = "br"
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+PORT = int(os.environ.get('PORT', '8443'))
 
 persistence = persistence.MongoPersistence()
 updater = Updater(token=TOKEN, use_context=True, persistence=persistence)
@@ -96,14 +97,14 @@ def help_handler(update: Update, context: CallbackContext):
                              parse_mode=ParseMode.HTML,
                              text=("Hello! Here are the available commands:\n\n"
                                    "<b>/bill - Split a bill with other people in the group</b>\n"
-                                   "`/bill [amount] [description]`\n"
+                                   "<code>/bill [amount] [description]</code>\n"
                                    "E.g.: /bill 23 Taxi\n\n"
                                    "You can optionally add usernames at the end to indicate who to split with:\n"
                                    "E.g.: /bill 23 Taxi @username @username\n\n"
                                    "To split with everyone:\n"
                                    "E.g. : /bill 23 Taxi @all\n\n"
                                    "<b>/paid - Record a payment to/from someone else</b>\n"
-                                   "`/paid [amount] [username]`\n"
+                                   "<code>/paid [amount] [username]</code>\n"
                                    "E.g.: /paid 24.50 @username\n\n"
                                    "<b>/list - See list of outstanding debts</b>"))
 
@@ -232,10 +233,10 @@ def add_bill(update: Update, context: CallbackContext):
             user.id: avg for user in users
         }
 
-    for user_id, amt in participant_ids.items():
+    for user_id, _amt in participant_ids.items():
         if sender.id != user_id:
-            context.chat_data["debts"][sender.id][user_id] -= amt
-            context.chat_data["debts"][user_id][sender.id] += amt
+            context.chat_data["debts"][sender.id][user_id] -= _amt
+            context.chat_data["debts"][user_id][sender.id] += _amt
 
     context.chat_data["bills"][new_id] = {
         "name": name, "amt": amt, "payer": sender.id, "participants": participant_ids,
@@ -707,4 +708,8 @@ dispatcher.add_handler(CallbackQueryHandler(button_payment_delete_cancel, patter
 list_handler = CommandHandler('list', list_summary, filters=Filters.update.message)
 dispatcher.add_handler(list_handler)
 
-updater.start_polling()
+updater.start_webhook(listen="0.0.0.0",
+                      port=PORT,
+                      url_path=TOKEN,
+                      webhook_url="https://bob-the-biller.herokuapp.com/" + TOKEN)
+updater.idle()
